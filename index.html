@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MUD RING — кольцевая гонка</title>
+<!--pwa: build.py вставляет сюда манифест, иконки и регистрацию service worker-->
+<style>
+  :root{
+    --orange:#ff7a1f; --orange2:#ffa14d; --ink:#0b0c0f; --panel:#12141a;
+    --hero:url("img/hero.jpg"); --judge:url("img/judge.jpg"); --fail:url("img/fail.jpg");
+    --line:rgba(255,255,255,.12); --txt:#eceef2; --dim:#9aa1ad; --green:#7dffa8;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0b0e;
+    font-family:"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--txt);
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none}
+  /* текст выделяется только в поле имени (Safari на iPhone понимает лишь -webkit-user-select) */
+  input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+  #game{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:pointer}
+  #overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    padding:16px;background:radial-gradient(120% 90% at 50% 0%,rgba(10,11,14,.72),rgba(6,7,9,.93));
+    backdrop-filter:blur(7px);z-index:10;overflow:auto}
+  #overlay.on{display:flex}
+  #overlay{align-items:flex-start}
+  .panel{width:min(760px,100%);margin:auto;background:linear-gradient(180deg,rgba(24,26,33,.96),rgba(14,16,21,.98));
+    border:1px solid var(--line);border-radius:18px;padding:26px 26px 22px;
+    box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);
+    animation:pop .28s cubic-bezier(.2,1.3,.4,1) both;max-height:96vh;overflow:auto}
+  @keyframes pop{from{transform:translateY(14px) scale(.97);opacity:0}to{transform:none;opacity:1}}
+  h1.logo{margin:2px 0 4px;font-family:"Arial Black",Impact,sans-serif;font-size:clamp(34px,7vw,58px);
+    letter-spacing:-1px;line-height:.94;font-style:italic;color:#fff;text-shadow:0 4px 0 rgba(0,0,0,.35)}
+  h1.logo span{color:var(--orange);-webkit-text-stroke:0}
+  h2{margin:0 0 6px;font-size:clamp(20px,3.4vw,28px);font-weight:800;letter-spacing:-.3px}
+  .sub{color:var(--dim);font-size:14px;line-height:1.45;margin-bottom:16px}
+  .sub.small{font-size:12.5px;margin-top:10px}
+  .sub b{color:#fff}
+  .kicker{font-size:12px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange);
+    font-weight:800;margin-bottom:14px}
+  .rules{display:grid;gap:8px;margin:6px 0 18px}
+  .rule{font-size:13.5px;line-height:1.5;color:#c6cbd4;background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.06);border-left:3px solid var(--orange);
+    border-radius:10px;padding:9px 12px}
+  .rule b{color:#fff}
+  .opts{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:18px}
+  .opt{display:flex;flex-direction:column;gap:7px;font-size:12px;letter-spacing:1.2px;
+    text-transform:uppercase;color:var(--dim);font-weight:700}
+  .seg{display:flex;background:#0c0e12;border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px}
+  .seg button{background:none;border:0;color:#aeb4bf;font:inherit;font-size:13px;letter-spacing:0;
+    text-transform:none;font-weight:700;padding:8px 14px;border-radius:8px;cursor:pointer;transition:.16s}
+  .seg button i{font-style:normal;color:#6d7481;font-weight:500;font-size:11px}
+  .seg button.on{background:linear-gradient(180deg,#2c303a,#1c2027);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.08) inset}
+  .seg button:hover{color:#fff}
+  .btn{display:block;width:100%;border:0;border-radius:13px;padding:16px;font-size:16px;font-weight:900;
+    letter-spacing:1.6px;cursor:pointer;transition:transform .12s,box-shadow .12s,filter .12s;
+    font-family:inherit;background:#22262e;color:#dfe3ea}
+  .btn.primary{background:linear-gradient(180deg,var(--orange2),var(--orange) 45%,#e35f0c);
+    color:#1a0d02;box-shadow:0 8px 24px rgba(255,122,31,.32),inset 0 1px 0 rgba(255,255,255,.4)}
+  .btn:hover{transform:translateY(-1px);filter:brightness(1.05)}
+  .btn:active{transform:translateY(1px) scale(.995)}
+  .keys{margin-top:14px;font-size:12px;color:#767d8a;text-align:center;line-height:1.7}
+  kbd{background:#1b1e25;border:1px solid #2c313b;border-bottom-width:2px;border-radius:5px;
+    padding:1px 6px;font:inherit;font-size:11px;color:#c9cfd9}
+  .grid4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:18px}
+  @media(max-width:640px){.grid4{grid-template-columns:1fr}}
+  .series{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:11px;padding:10px 12px}
+  .stitle{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--orange);font-weight:800;margin-bottom:7px}
+  .pair{display:flex;align-items:center;gap:7px;font-size:13px;padding:3px 0;border-top:1px dashed rgba(255,255,255,.06)}
+  .pair:first-of-type{border-top:0}
+  .pair em{color:#5c636f;font-style:normal;font-size:11px}
+  .pair i{font-style:normal;color:#6c7482;font-size:10px;margin-left:-4px}
+  .who{color:#c9cfd9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .who.me{color:var(--orange);font-weight:800}
+  .free{color:#6d7481;font-style:italic}
+  .lane-row,.res-row{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;
+    background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.06);margin-bottom:7px;font-size:14px}
+  .lane-row.me{border-color:rgba(255,122,31,.5);background:rgba(255,122,31,.09)}
+  .lane-row .ln{font-size:11px;text-transform:uppercase;letter-spacing:1.4px;color:#7b8391;min-width:74px}
+  .lane-row b{font-weight:800}
+  .res-row b{flex:1;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .res-row .ln{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:#7b8391;min-width:74px}
+  .res-row.me{border-color:rgba(255,122,31,.5);background:rgba(255,122,31,.09)}
+  .res-row.win{box-shadow:0 0 0 1px rgba(125,255,168,.35) inset}
+  .rt{font-variant-numeric:tabular-nums;color:#d4d9e2;font-weight:700;font-size:13px}
+  .pen{font-style:normal;color:#ff7a5a;font-size:11px;margin-left:4px}
+  .tot{font-variant-numeric:tabular-nums;font-weight:900;font-size:17px;min-width:66px;text-align:right}
+  .diff{font-size:11.5px;color:#7d8592;min-width:52px;text-align:right}
+  .lap{font-size:11px;color:#6d7481;min-width:84px;text-align:right}
+  .pl{width:22px;font-weight:900;color:#8b94a2;font-size:13px}
+  .table{margin:6px 0 18px}
+  .table.final .res-row:nth-child(1){background:linear-gradient(90deg,rgba(125,255,168,.16),rgba(125,255,168,.02))}
+
+  /* поле имени */
+  .namefield{display:flex;flex-direction:column;gap:7px;margin:0 0 16px}
+  .namefield span{font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);font-weight:700}
+  #pname{width:100%;background:#0c0e12;border:1px solid var(--line);border-radius:11px;
+    padding:12px 14px;color:#fff;font:inherit;font-size:15px;font-weight:700;letter-spacing:.3px;
+    outline:none;transition:border-color .16s,box-shadow .16s}
+  #pname:focus{border-color:rgba(255,122,31,.65);box-shadow:0 0 0 3px rgba(255,122,31,.14)}
+  #pname::placeholder{color:#5f6673;font-weight:500}
+  .hint-line{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:-8px 0 16px;
+    font-size:11.5px;color:#6f7784}
+  .hint-line b{color:var(--orange);font-weight:700}
+
+  /* форма «Готов» с фотографией на фоне */
+  .panel.hero{position:relative;overflow:hidden;padding:0;border-color:rgba(255,255,255,.18)}
+  .panel.hero .hero-bg{position:absolute;inset:0;background:#0b0c0f 38% 12%/cover no-repeat;
+    background-image:linear-gradient(180deg,rgba(6,7,9,.02) 0%,rgba(6,7,9,.10) 30%,rgba(6,7,9,.62) 55%,rgba(6,7,9,.93) 78%,rgba(6,7,9,.97) 100%),var(--hero);
+    transform:scale(1.02)}
+  .panel.hero .hero-bg::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,rgba(6,7,9,.42) 0%,rgba(6,7,9,.06) 38%,rgba(6,7,9,0) 62%)}
+  .panel.hero .hero-in{position:relative;padding:22px 26px 24px;display:flex;flex-direction:column;justify-content:flex-end;min-height:min(78vh,620px)}
+  .panel.hero .hero-top{flex:1 1 auto;min-height:64px}
+  .panel.hero:not(.wide){max-width:640px}
+  .panel.hero .kicker{color:#ffc48a;text-shadow:0 2px 14px rgba(0,0,0,.95),0 0 3px rgba(0,0,0,.9)}
+  .panel.hero h2{margin:0 0 6px;font-size:clamp(26px,4.6vw,38px);color:#fff;
+    text-shadow:0 3px 22px rgba(0,0,0,1),0 1px 3px rgba(0,0,0,.95)}
+  .panel.hero .sub{color:#f0f3f7;text-shadow:0 2px 12px rgba(0,0,0,1),0 1px 3px rgba(0,0,0,.9);max-width:42ch}
+  .panel.hero .rule,.panel.hero .lane-row{background:rgba(8,9,12,.62);backdrop-filter:blur(6px);
+    border-color:rgba(255,255,255,.12)}
+  .panel.hero .lane-row{border-left:3px solid rgba(255,255,255,.18)}
+  .panel.hero .lane-row.me{border-left-color:var(--orange)}
+  /* «Экстрим»: вопрос по регламенту и «утонул» — другие фото на фоне */
+  /* на фото уже есть надпись «ПОТРАЧЕНО» — показываем его целиком над текстом */
+  .panel.hero.fail .hero-bg{position:relative;inset:auto;transform:none;aspect-ratio:1100/738;background-position:50% 50%;
+    background-image:linear-gradient(180deg,rgba(6,7,9,0) 0%,rgba(6,7,9,0) 82%,rgba(18,20,26,1) 100%),var(--fail)}
+  .panel.hero.fail .hero-in{min-height:0;padding-top:6px}
+  .panel.hero.fail .hero-top{display:none}
+  /* «Экстрим»: вопрос по регламенту — фото судьи на фоне */
+  .panel.hero.judge .hero-bg{background-position:30% 18%;
+    background-image:linear-gradient(180deg,rgba(6,7,9,.0) 0%,rgba(6,7,9,.08) 28%,rgba(6,7,9,.66) 50%,rgba(6,7,9,.94) 70%,rgba(6,7,9,.97) 100%),var(--judge)}
+  .panel.hero.fail .hero-bg::after,.panel.hero.judge .hero-bg::after{display:none}
+  .panel.hero .q-text{font-size:17px;font-weight:700;max-width:none;margin:2px 0 12px;line-height:1.4}
+  .qa{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+  .qa button{text-align:left;background:rgba(8,9,12,.72);backdrop-filter:blur(6px);color:#eceef2;
+    border:1px solid rgba(255,255,255,.16);border-radius:11px;padding:12px 14px;font:inherit;font-size:14.5px;
+    cursor:pointer;transition:border-color .15s,background .15s}
+  .qa button:hover:not(:disabled){border-color:var(--orange);background:rgba(30,20,12,.8)}
+  .qa button:disabled{cursor:default;opacity:.75}
+  .qa button.ok{border-color:#3bd16f;background:rgba(18,70,38,.85);opacity:1}
+  .qa button.bad{border-color:#ff5a4a;background:rgba(90,22,18,.85);opacity:1}
+  .panel.hero.fail h2{color:#ff6a55}
+  .panel.hero .heat-res .kicker{display:none}
+  .panel.hero .heat-res .res-row{background:rgba(8,9,12,.66);backdrop-filter:blur(6px)}
+  .credit{position:absolute;right:12px;bottom:8px;font-size:10px;color:rgba(255,255,255,.35);
+    letter-spacing:.4px;z-index:2;pointer-events:none}
+
+  /* таблица рекордов */
+  .rec-row{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;
+    padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.06);margin-bottom:7px;font-size:14px}
+  .rec-row .pl{width:auto;font-weight:900;color:#8b94a2;font-size:13px;text-align:right}
+  .rec-row .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rec-row .who b{font-weight:800;color:#fff}
+  .rec-row .meta{display:block;font-size:11px;color:#6d7481;margin-top:2px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .rec-row .tm{font-variant-numeric:tabular-nums;font-weight:900;font-size:16px;text-align:right}
+  .rec-row.top1{background:linear-gradient(90deg,rgba(255,196,70,.18),rgba(255,196,70,.02));border-color:rgba(255,196,70,.35)}
+  .rec-row.top1 .tm{color:#ffd23e}
+  .rec-row.top2 .tm{color:#dfe3ea}
+  .rec-row.top3 .tm{color:#e8a87c}
+  .rec-row.fresh{border-color:rgba(125,255,168,.55);background:rgba(125,255,168,.10)}
+  .rec-row.fresh .tm{color:#7dffa8}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.8px;text-transform:uppercase;
+    padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.10);color:#b9c0cb;margin-left:6px;
+    vertical-align:1px;font-weight:700}
+  .empty{text-align:center;color:#6d7481;font-size:13px;padding:26px 10px;line-height:1.6}
+  .rowbtns{display:flex;gap:10px;margin-top:12px}
+  .install{text-align:center;margin-top:10px}
+  .install:empty{display:none}
+  .instbtn{background:none;border:0;color:#9aa1ad;font:inherit;font-size:13px;cursor:pointer;padding:4px 6px;
+    text-decoration:underline;text-decoration-color:rgba(255,255,255,.22)}
+  .instbtn:hover{color:#fff}
+  .insthint{font-size:13px;line-height:1.5;color:#c9cfd9;background:rgba(255,255,255,.05);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;text-align:left}
+  .insthint b{color:#fff}
+  .insthint a{color:var(--orange);white-space:nowrap}
+  .insthint .ico{display:inline-block;padding:0 5px;border:1px solid rgba(255,255,255,.3);border-radius:5px;font-size:11px}
+  .rowbtns .btn{flex:1}
+  .rec-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 12px}
+  /* рекорды: шапка и кнопки на месте, прокручивается только список */
+  .panel.records{display:flex;flex-direction:column;overflow:hidden}
+  .panel.records > *{flex:0 0 auto}
+  .panel.records #rec-table{flex:1 1 auto;min-height:150px;overflow-y:auto;overscroll-behavior:contain;
+    margin:6px -6px 12px;padding:0 6px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}
+  .btn.more{margin:10px 0 6px;padding:11px;font-size:13px;letter-spacing:1px;background:rgba(255,255,255,.06);
+    color:#c9cfd9;border:1px solid var(--line)}
+  .btn.more:disabled{opacity:.6;cursor:default}
+  .rec-tabs .seg button{padding:6px 10px}
+  @media(max-width:520px){
+    .panel.hero .hero-in{padding:18px 16px 18px;min-height:min(78vh,600px)}
+    .panel.hero .hero-bg{background-position:44% 10%}
+    .rec-row{grid-template-columns:22px 1fr auto;gap:7px;padding:9px 10px;font-size:13px}
+    .rec-row .tm{font-size:15px}
+    .rec-row .meta{font-size:10px}
+  }
+  #gasped{position:fixed;right:18px;bottom:18px;width:104px;height:104px;border-radius:50%;display:none;
+    align-items:center;justify-content:center;font-weight:900;letter-spacing:2px;font-size:15px;color:#1a0d02;
+    background:radial-gradient(circle at 35% 30%,#ffb268,#ff7a1f 60%,#d9540c);
+    box-shadow:0 10px 30px rgba(255,122,31,.35),inset 0 2px 0 rgba(255,255,255,.45);z-index:5;touch-action:none;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-user-drag:none}
+  /* надпись — псевдоэлемент: iOS не может её выделить или «поднять» для перетаскивания */
+  #gasped::before{content:"ГАЗ";pointer-events:none}
+  #gasped:active{transform:scale(.96)}
+  #snd{position:fixed;right:14px;top:14px;z-index:6;width:38px;height:38px;border-radius:10px;border:1px solid rgba(255,255,255,.16);
+    background:rgba(12,12,15,.72);color:#fff;font-size:16px;cursor:pointer;display:none}
+  #snd.on{display:block}
+  #snd.muted{opacity:.4;text-decoration:line-through}
+  body.touch #gasped.on.show{display:flex}
+  @media(max-width:520px){
+    .panel{padding:18px 16px 16px;border-radius:14px}
+    .res-row,.lane-row{padding:9px 10px;font-size:13px;gap:7px}
+    .res-row .ln,.lane-row .ln{min-width:56px;font-size:9.5px;letter-spacing:.6px}
+    .res-row .lap{display:none}
+    .tot{font-size:15px;min-width:56px}
+    .diff{min-width:40px;font-size:10.5px}
+    .rt{font-size:12px}
+    .rule{font-size:12.5px}
+    .btn{padding:14px;font-size:15px}
+    .pair{font-size:12px}
+    .grid4{gap:8px}
+    #gasped{width:88px;height:88px;font-size:13px;right:12px;bottom:12px}
+    /* узкий экран: 4 уровня и 5 вкладок рекордов должны помещаться в ширину */
+    .opts .opt{flex:1 1 100%;min-width:0}
+    .opts .seg button{flex:1 1 auto;padding:8px 6px;font-size:12.5px}
+    .rec-tabs .seg{flex-wrap:wrap;max-width:100%}
+    .rec-tabs .seg button{flex:1 1 auto;padding:6px 6px;font-size:12px}
+    .rowbtns .btn{min-width:0;padding:14px 8px;letter-spacing:.6px}
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="overlay"></div>
+<div id="gasped" class="on" role="button" aria-label="Газ" draggable="false"></div>
+<button id="snd" title="Звук">♪</button>
+<script type="application/json" id="mr-questions" data-src="questions.json"></script>
+<script src="src/core.js"></script>
+<script src="src/store.js"></script>
+<script src="src/sound.js"></script>
+<script src="src/render.js"></script>
+<script src="src/game.js"></script>
+</body>
+</html>
