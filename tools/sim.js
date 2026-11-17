@@ -34,7 +34,7 @@ for (const diff of ['easy', 'normal', 'hard', 'extreme']) {
   for (let i = 0; i < 40; i++) {
     const rnd = MR.rng(1000 + i * 7), tr = MR.makeTrack(1 + (i % 5));
     const ai = MR.makeAI(SK[0] + (SK[1] - SK[0]) * rnd(), rnd, diff === 'extreme');
-    const r = MR.newRider(); r.zw = MR.ZW[diff]; r.extreme = diff === 'extreme'; r.go = true;
+    const r = MR.newRider(); r.extreme = diff === 'extreme'; r.go = true;
     let t = 0, l = C.PASSES[0];
     while (t < 900) {
       t += C.DT;

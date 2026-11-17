@@ -345,7 +345,7 @@
       if (G.screen !== 'question') return;
       if (!list.length) { onPass(); return; }     // вопросов нет — пропускаем
       const q = list[Math.floor(Math.random() * list.length)];
-      const order = q.answers.map((_, i) => i).sort(() => Math.random() - 0.5);
+      const order = MR.shuffle(q.answers.map((_, i) => i), Math.random);
       show(`
         <div class="hero-bg"></div>
         <div class="hero-in">
@@ -391,14 +391,14 @@
     G.me = { r, look: LOOK, name: STORE.name || 'ВЫ', player: true };
     // масстарт: 8 квадроциклов сеткой за стартовой линией, место игрока в сетке — случайное
     const rnd = MR.rng(Date.now() % 1e9), sk = SKILL[G.diff];
-    const names = NAMES.slice().sort(() => rnd() - 0.5);
+    const names = MR.shuffle(NAMES.slice(), rnd);
     const slots = []; for (let i = 0; i <= BOTS; i++) slots.push(i);
-    slots.sort(() => rnd() - 0.5);
+    MR.shuffle(slots, rnd);
     r.x = C.START - slots[0] * GRID;
     G.bots = [];
     for (let i = 0; i < BOTS; i++) {
       const br = MR.newRider();
-      br.zw = MR.ZW[G.diff]; br.extreme = isExtreme(); br.x = C.START - slots[i + 1] * GRID;
+      br.extreme = isExtreme(); br.x = C.START - slots[i + 1] * GRID;
       const brnd = MR.rng(Math.floor(rnd() * 1e9) + i);
       G.bots.push({ r: br, ai: MR.makeAI(sk[0] + (sk[1] - sk[0]) * brnd(), brnd, isExtreme()), name: names[i], look: LOOKS[1 + i],
         lane: C.PASSES[0], pass: 0, total: null, out: '', pen: 0 });

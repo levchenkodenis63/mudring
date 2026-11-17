@@ -2,7 +2,7 @@
    Сначала сеть (чтобы сразу получать новые версии), без сети — из кэша.
    Запросы к серверу рекордов (другой домен) не трогаем: ими управляет store.js.
    VERSION подставляет build.py — новая сборка = новый кэш. */
-const VERSION = 'a3c4f8c20f';
+const VERSION = 'e49c6a5ba5';
 const CACHE = 'mudring-' + VERSION;   // свой префикс: MudRacing на том же домене
 const FILES = ['./', './index.html', './install.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',

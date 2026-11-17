@@ -40,8 +40,17 @@ const MR = (function () {
     ROLLBACK: 2.6,      // заглох на лебёдке — откат назад в лужу, м
     BREAK_STALLS: 2     // «Экстрим»: столько заглоханий подряд на одной лебёдке — обрыв троса
   };
-  // ширина зелёной зоны по уровням: на столько расширяется зона с каждой стороны
+  // ширина зелёной зоны игрока по уровням: на столько расширяется зона с каждой стороны (боты — без поправки)
   const ZW = { easy: 0.08, normal: 0.04, hard: 0, extreme: 0 };
+
+  // равномерное перемешивание (Фишер — Йейтс); sort(() => rnd() - 0.5) даёт перекос
+  function shuffle(a, rnd) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
 
   /* ---------- Трасса ---------- */
   function makeTrack(seed) {
@@ -422,7 +431,7 @@ const MR = (function () {
     return { gas: r.rpm < target, tap: false };
   }
 
-  return { C, ZW, clamp, lerp, smooth, rng, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
+  return { C, ZW, clamp, lerp, smooth, rng, shuffle, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
     newRider, stepRider, winchTap, makeAI, aiStep };
 })();
 if (typeof module !== 'undefined') module.exports = MR;
