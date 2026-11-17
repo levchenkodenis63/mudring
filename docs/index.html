@@ -558,7 +558,7 @@ const MR = (function () {
       const dep = depthAt(track, l, r.x);
       if (dep > 0.1) {
         r.entered[bi] = true;
-        const zz = zone(clamp(dep / C.FLOAT, 0, 1));
+        const zz = zone(clamp(dep / C.FLOAT, 0, 1), r.zw);
         let kind;
         if (r.rpm > zz[1] + 0.02) { kind = 'flood'; r.v *= 0.74; r.heat = Math.min(0.97, r.heat + 0.12); r.floods++; }
         else if (r.rpm >= zz[0] - 0.06) { kind = 'clean'; r.v *= 0.94; r.clean++; }
