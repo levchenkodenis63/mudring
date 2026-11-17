@@ -70,6 +70,17 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
     border:1px solid rgba(255,255,255,.06);border-left:3px solid var(--orange);
     border-radius:10px;padding:9px 12px}
   .rule b{color:#fff}
+  /* «Экстрим»: выбор резины */
+  .tyres{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 18px}
+  @media (max-width:520px){.tyres{grid-template-columns:1fr}}
+  .tyre{text-align:left;font:inherit;color:#c6cbd4;background:rgba(255,255,255,.035);cursor:pointer;
+    border:1px solid var(--line);border-radius:13px;padding:14px 14px 12px;transition:border-color .15s,background .15s}
+  .tyre b{display:block;color:#fff;font-size:19px;font-weight:900;margin-bottom:8px}
+  .tyre ul{margin:0;padding-left:18px;font-size:13px;line-height:1.5}
+  .tyre li.plus{color:var(--green)}
+  .tyre li.minus{color:#ff8a6a}
+  .tyre:hover{border-color:rgba(255,255,255,.28)}
+  .tyre.on{border-color:var(--orange);background:rgba(255,122,31,.10);box-shadow:0 0 0 1px var(--orange) inset}
   .opts{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:18px}
   .opt{display:flex;flex-direction:column;gap:7px;font-size:12px;letter-spacing:1.2px;
     text-transform:uppercase;color:var(--dim);font-weight:700}
@@ -309,6 +320,15 @@ const MR = (function () {
   };
   // ширина зелёной зоны игрока по уровням: на столько расширяется зона с каждой стороны (боты — без поправки)
   const ZW = { easy: 0.08, normal: 0.04, hard: 0, extreme: 0 };
+  // «Экстрим»: резина на заезд. zw — поправка зелёной зоны (в воде и на лебёдке), water — скорость в воде,
+  // slope — доля штрафа за подъём, winch — скорость лебёдки, drive — столько заглохов подряд в воде ломают привод (0 — не ломают)
+  const TYRES = {
+    mudlite: { name: 'MudLite', zw: 0.05, water: 0.92, slope: 1, winch: 1, drive: 0 },
+    assassinator: { name: 'Assassinator', zw: -0.04, water: 1.08, slope: 0.6, winch: 1.15, drive: 2 }
+  };
+  const NO_TYRE = { zw: 0, water: 1, slope: 1, winch: 1, drive: 0 };
+  const tyreOf = (r) => r.tyre || NO_TYRE;
+  const zwOf = (r) => r.zw + tyreOf(r).zw;
 
   // равномерное перемешивание (Фишер — Йейтс); sort(() => rnd() - 0.5) даёт перекос
   function shuffle(a, rnd) {
@@ -448,7 +468,8 @@ const MR = (function () {
       extreme: false, dead: false, deadT: 0, prevGas: false, drowned: false, sinkT: 0,
       zw: 0,                                   // поправка ширины зелёной зоны (уровень)
       spot: null, cable: false, atTop: false,  // лебёдка: ближайший выезд, трос зацеплен, наверху
-      roll: 0, winchStalls: 0, broken: false, done: {}, blocked: false, winches: 0, wstalls: 0
+      roll: 0, winchStalls: 0, broken: false, done: {}, blocked: false, winches: 0, wstalls: 0,
+      tyre: null, waterStalls: 0, driveOut: false   // «Экстрим»: резина, заглохи подряд в воде, сломан привод
     };
   }
 
@@ -461,11 +482,19 @@ const MR = (function () {
       r.pitch += (0.18 - r.pitch) * Math.min(1, dt * 2);
       return;
     }
+    // привод сломан: стоит в воде, мотор глохнет
+    if (r.driveOut) {
+      r.v = 0; r.gas = false; r.spin = false;
+      r.rpm = Math.max(C.IDLE, r.rpm - dt);
+      return;
+    }
     const pressed = gas, fresh = pressed && !r.prevGas;
     r.prevGas = pressed;
     const depth = depthAt(track, l, r.x);
     const d = clamp(depth / C.FLOAT, 0, 1);
     r.d = d; r.depth = depth; r.float = depth > C.FLOAT;
+    if (d <= 0.02 && !r.dead) r.waterStalls = 0;     // выехал из воды — счёт заглохов подряд сначала
+    const ty = tyreOf(r);
     if (r.dead) {
       // «Экстрим»: заглох в воде — завести можно только новым нажатием газа
       r.deadT += dt; r.cut = 1; gas = false;
@@ -486,7 +515,7 @@ const MR = (function () {
     r.spot = null;
     if (ws) for (const sp of ws) if (!r.done[sp.id] && r.x > sp.x0 - 12 && r.x <= sp.x1 + 0.01) { r.spot = sp; break; }
     if (r.spot && r.cable && r.go) { winchStep(r, track, l, gas, dt); return; }
-    const z = zone(d, r.zw), lo = z[0], hi = z[1];
+    const z = zone(d, zwOf(r)), lo = z[0], hi = z[1];
     r.lo = lo; r.hi = hi;
 
     if (gas) r.rpm += (r.air ? 1.5 : 0.9) * dt; else r.rpm -= 0.8 * dt;
@@ -512,14 +541,19 @@ const MR = (function () {
       }
       if (r.heat >= 1 && r.cut <= 0 && !r.dead && !r.fin) {
         r.heat = 0.6; r.heats++;
-        if (r.extreme && inWater) { r.dead = true; r.deadT = 0; r.cut = 1; }
+        if (r.extreme && inWater) { r.dead = true; r.deadT = 0; r.cut = 1; r.waterStalls++; }
         else r.cut = 1.6;
-        r.ev.push({ t: 'overheat', dead: r.dead });
+        r.ev.push({ t: 'overheat', dead: r.dead, n: r.waterStalls });
+        if (r.dead && ty.drive && r.waterStalls >= ty.drive) {      // Assassinator: привод не выдержал
+          r.dead = false; r.driveOut = true; r.v = 0;
+          r.ev.push({ t: 'drive' });
+          return;
+        }
       }
       const gF = groundAt(track, l, r.x + 0.6), gR = groundAt(track, l, r.x - 0.6);
       const slope = (gF - gR) / 1.2;
-      let vmax = inWater ? lerp(10.5, 4.6, Math.pow(d, 0.8)) : 15;
-      if (slope > 0) vmax *= 1 - 0.45 * Math.min(1, slope / 0.5);
+      let vmax = inWater ? lerp(10.5, 4.6, Math.pow(d, 0.8)) * ty.water : 15;
+      if (slope > 0) vmax *= 1 - 0.45 * ty.slope * Math.min(1, slope / 0.5);
       const vt = vmax * eff * (1 - 0.45 * r.dig);
       let a;
       if (vt > r.v) a = Math.min((vt - r.v) * (inWater ? 1.8 : 1.2), inWater ? 5.5 : 7.5);
@@ -567,7 +601,7 @@ const MR = (function () {
       const dep = depthAt(track, l, r.x);
       if (dep > 0.1) {
         r.entered[bi] = true;
-        const zz = zone(clamp(dep / C.FLOAT, 0, 1), r.zw);
+        const zz = zone(clamp(dep / C.FLOAT, 0, 1), zwOf(r));
         let kind;
         if (r.rpm > zz[1] + 0.02) { kind = 'flood'; r.v *= 0.74; r.heat = Math.min(0.97, r.heat + 0.12); r.floods++; }
         else if (r.rpm >= zz[0] - 0.06) { kind = 'clean'; r.v *= 0.94; r.clean++; }
@@ -594,7 +628,7 @@ const MR = (function () {
   // В зелёной зоне — тянет, ниже — сползает обратно, выше — мотор греется и глохнет (откат в лужу).
   function winchStep(r, track, l, gas, dt) {
     const sp = r.spot;
-    const z = winchZone(r.zw), lo = z[0], hi = z[1];
+    const z = winchZone(zwOf(r)), lo = z[0], hi = z[1], wv = C.WINCH_V * tyreOf(r).winch;
     r.lo = lo; r.hi = hi;
     if (r.cut > 0 || r.atTop) gas = r.atTop ? gas : false;
     if (r.cut > 0) r.cut -= dt;
@@ -614,7 +648,7 @@ const MR = (function () {
     } else {
       const over = Math.max(0, r.rpm - hi);
       if (r.rpm < lo) v = C.WINCH_V * (0.75 * (r.rpm - C.IDLE) / (lo - C.IDLE) - 0.35);   // мало оборотов — сползает
-      else v = C.WINCH_V * (over > 0 ? Math.max(0.35, 1 - over * 3) : 1);
+      else v = wv * (over > 0 ? Math.max(0.35, 1 - over * 3) : 1);
       if (over > 0) r.heat += (0.35 + over * C.WINCH_HEAT) * dt;
       else r.heat = Math.max(0, r.heat - 0.25 * dt);
       if (r.heat >= 1) {                                       // перекрутил — заглох, трос ослаб, откат
@@ -636,7 +670,7 @@ const MR = (function () {
   /* зацепить / отцепить трос — тап по столбику. Возвращает, что произошло. */
   function winchTap(r) {
     const sp = r.spot;
-    if (!sp || r.fin || r.drowned || r.broken) return 'none';
+    if (!sp || r.fin || r.drowned || r.broken || r.driveOut) return 'none';
     if (!r.cable) {
       if (r.air || r.x < sp.x0 - C.WINCH_REACH) return 'far';
       r.cable = true; r.atTop = false; r.roll = 0; r.winchStalls = 0; r.v = 0; r.winches++;
@@ -698,7 +732,7 @@ const MR = (function () {
     return { gas: r.rpm < target, tap: false };
   }
 
-  return { C, ZW, clamp, lerp, smooth, rng, shuffle, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
+  return { C, ZW, TYRES, clamp, lerp, smooth, rng, shuffle, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
     newRider, stepRider, winchTap, makeAI, aiStep };
 })();
 if (typeof module !== 'undefined') module.exports = MR;
@@ -1709,7 +1743,7 @@ const RN = (function () {
     screen: 'menu', track: null, lanes: [null, null], lane: 0, pass: 0, me: null,
     t: 0, pre: 0, lights: 0, lightA: 0, started: false, pen: 0, fs: false,
     particles: [], splats: [], msgs: [], diff: 'normal', laps: [], endT: 0, ended: false, failWhy: '',
-    bots: [], place: 0, split: null
+    bots: [], place: 0, split: null, tyre: 'mudlite'
   };
   window.__MRG = G;
   const isExtreme = () => G.diff === 'extreme';
@@ -1960,7 +1994,7 @@ const RN = (function () {
       easy: 'Широкая зелёная зона — привыкнуть к воде и лебёдке.',
       normal: 'Зелёная зона поуже.',
       hard: 'Узкая зелёная зона в воде и на лебёдке.',
-      extreme: 'Как «Профи», плюс: заглох в воде — заводи сам (отпусти и нажми газ), иначе утонешь; заглох на лебёдке два раза подряд — обрыв троса. Тогда время не засчитывается.'
+      extreme: 'Как «Профи», плюс: перед стартом выбираешь резину; заглох в воде — заводи сам (отпусти и нажми газ), иначе утонешь; заглох на лебёдке два раза подряд — обрыв троса. Тогда время не засчитывается.'
     };
     const seg = ov.querySelector('.seg[data-opt="d"]');
     const sync = () => {
@@ -2058,9 +2092,39 @@ const RN = (function () {
     });
   }
 
-  // старт с главной: на «Экстриме» сначала вопрос по регламенту
+  // старт с главной: на «Экстриме» — выбор резины, затем вопрос по регламенту
   function startFlow() {
-    if (isExtreme()) questionScreen(readyScreen); else readyScreen();
+    if (isExtreme()) tyreScreen(() => questionScreen(readyScreen)); else readyScreen();
+  }
+
+  /* ---------- «Экстрим»: выбор резины на заезд ---------- */
+  const TYRE_INFO = {
+    mudlite: { plus: ['Шире зелёная зона — в воде и на лебёдке'], minus: ['Ниже скорость в воде'] },
+    assassinator: { plus: ['Выше скорость в воде', 'Быстрее на подъёмах и на лебёдке'],
+      minus: ['Уже зелёная зона', 'Заглох в воде 2 раза подряд — привод выходит из чата'] }
+  };
+  function tyreScreen(onPick) {
+    G.screen = 'tyre';
+    const cards = Object.keys(MR.TYRES).map((k) => `<button class="tyre${G.tyre === k ? ' on' : ''}" data-k="${k}">
+        <b>${escHtml(MR.TYRES[k].name)}</b><ul>
+        ${TYRE_INFO[k].plus.map((t) => `<li class="plus">${escHtml(t)}</li>`).join('')}
+        ${TYRE_INFO[k].minus.map((t) => `<li class="minus">${escHtml(t)}</li>`).join('')}</ul></button>`).join('');
+    show(`
+      <div class="kicker">Экстрим · тюнинг</div>
+      <h2>Выбери резину</h2>
+      <div class="sub">Резина ставится на весь заезд — оба круга. Соперники тоже выбирают свою.</div>
+      <div class="tyres">${cards}</div>
+      <div class="rowbtns">
+        <button class="btn" id="btn-tyre-back">НАЗАД</button>
+        <button class="btn primary" id="btn-tyre-go">ДАЛЕЕ</button>
+      </div>
+    `);
+    ov.querySelectorAll('.tyre').forEach((b) => b.addEventListener('click', () => {
+      G.tyre = b.dataset.k;
+      ov.querySelectorAll('.tyre').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+    document.getElementById('btn-tyre-back').addEventListener('click', () => { hide(); menu(); });
+    document.getElementById('btn-tyre-go').addEventListener('click', () => { hide(); setTimeout(onPick, 150); });
   }
 
   /* ---------- старт ---------- */
@@ -2070,7 +2134,8 @@ const RN = (function () {
     G.pass = 0; G.lane = C.PASSES[0]; G.laps = []; G.failWhy = '';
     const r = MR.newRider();
     r.zw = MR.ZW[G.diff]; r.extreme = isExtreme();
-    G.me = { r, look: LOOK, name: STORE.name || 'ВЫ', player: true };
+    r.tyre = isExtreme() ? MR.TYRES[G.tyre] : null;
+    G.me ={ r, look: LOOK, name: STORE.name || 'ВЫ', player: true };
     // масстарт: 8 квадроциклов сеткой за стартовой линией, место игрока в сетке — случайное
     const rnd = MR.rng(Date.now() % 1e9), sk = SKILL[G.diff];
     const names = MR.shuffle(NAMES.slice(), rnd);
@@ -2082,6 +2147,7 @@ const RN = (function () {
       const br = MR.newRider();
       br.extreme = isExtreme(); br.x = C.START - slots[i + 1] * GRID;
       const brnd = MR.rng(Math.floor(rnd() * 1e9) + i);
+      if (isExtreme()) br.tyre = MR.TYRES[brnd() < 0.5 ? 'mudlite' : 'assassinator'];   // боты выбирают резину наугад
       G.bots.push({ r: br, ai: MR.makeAI(sk[0] + (sk[1] - sk[0]) * brnd(), brnd, isExtreme()), name: names[i], look: LOOKS[1 + i],
         lane: C.PASSES[0], pass: 0, total: null, out: '', pen: 0 });
     }
@@ -2095,11 +2161,12 @@ const RN = (function () {
       <div class="hero-bg"></div>
       <div class="hero-in">
         <div class="hero-top"></div>
-        <div class="kicker">${escHtml(DIFFNAME[G.diff])} · масстарт ${BOTS + 1} квадроциклов · 2 круга · лебёдок: ${nW}</div>
+        <div class="kicker">${escHtml(DIFFNAME[G.diff])}${r.tyre ? ' · резина ' + escHtml(r.tyre.name) : ''} · масстарт ${BOTS + 1} квадроциклов · 2 круга · лебёдок: ${nW}</div>
         <h2>${escHtml(STORE.name ? STORE.name + ', готов?' : 'Готов?')}</h2>
         <div class="sub">Масстарт с <b>верхней дорожки</b>, ты в сетке <b>${slots[0] + 1}-м</b>. Финишная арка — переход на другую дорожку, после четвёртого отрезка — финиш. Соперники — полупрозрачные, столкновений нет. Газ только после зелёного: фальстарт +2.00 с.</div>
         <div class="sub small">${isExtreme()
-          ? '<b>Экстрим:</b> заглох в воде — отпусти газ и нажми снова, иначе через ' + C.DROWN + ' с утонешь. Два заглоха подряд на лебёдке — обрыв троса. В обоих случаях время не засчитывается.'
+          ? '<b>Экстрим:</b> заглох в воде — отпусти газ и нажми снова, иначе через ' + C.DROWN + ' с утонешь. Два заглоха подряд на лебёдке — обрыв троса.' +
+            (r.tyre && r.tyre.drive ? ' На Assassinator два заглоха подряд в воде — привод выходит из чата.' : '') + ' Тогда время не засчитывается.'
           : 'На крутом выезде без лебёдки не подняться: подъедь к стенке и тапни по столбику (или <kbd>E</kbd>). Наверху тапни ещё раз — отцепи трос.'}</div>
         <button class="btn primary" id="btn-go">ГОТОВ</button>
         <div class="credit">фото: MUD RACING</div>
@@ -2127,7 +2194,8 @@ const RN = (function () {
         else if (ev.kind === 'flood') { SFX.flood(); msg('ПЕРЕЛИВ! −25% хода', '#ff7a5a', false); RN.view.shake = 0.45; burst(r, 26, 'mud'); splat(); }
         else { msg('малый газ — тонет', '#ffd23e', false); SFX.splash(r.v); burst(r, 8, 'light'); }
       } else if (ev.t === 'overheat') {
-        msg(ev.dead ? 'ЗАГЛОХ! Отпусти газ и жми снова' : 'ЗАГЛОХ! −1.6 с', '#ff5a4a', false);
+        const last = ev.dead && r.tyre && r.tyre.drive && ev.n === r.tyre.drive - 1;   // Assassinator: ещё один — и привод всё
+        msg(last ? 'ЗАГЛОХ! Ещё раз в воде — привод не выдержит' : ev.dead ? 'ЗАГЛОХ! Отпусти газ и жми снова' : 'ЗАГЛОХ! −1.6 с', '#ff5a4a', false);
         RN.view.shake = 0.55; splat(); SFX.overheat(); burst(r, 10, 'dark');
       } else if (ev.t === 'restart') {
         msg('ЗАВЁЛСЯ!', '#7dffa8', false);
@@ -2140,6 +2208,8 @@ const RN = (function () {
         msg(isExtreme() && ev.n === 1 ? 'ЗАГЛОХ НА ЛЕБЁДКЕ! Ещё раз — обрыв троса' : 'ЗАГЛОХ НА ЛЕБЁДКЕ — откат', '#ff5a4a', false);
       } else if (ev.t === 'break') {
         SFX.flood(); RN.view.shake = 1; msg('ОБРЫВ ТРОСА!', '#ff5a4a', true);
+      } else if (ev.t === 'drive') {
+        SFX.flood(); RN.view.shake = 1; splat(); burst(r, 24, 'dark'); msg('ПРИВОД ВЫШЕЛ ИЗ ЧАТА', '#ff5a4a', true);
       } else if (ev.t === 'top') {
         SFX.ui(); msg('НАВЕРХУ! Отцепи трос', '#7dffa8', false);
       } else if (ev.t === 'land') {
@@ -2177,8 +2247,8 @@ const RN = (function () {
     if (a.tap) MR.winchTap(r);
     MR.stepRider(r, G.track, b.lane, a.gas, dt, t);
     for (const ev of r.ev) {
-      if ((ev.t === 'break' || ev.t === 'drown') && !b.out) {
-        b.out = ev.t === 'break' ? 'обрыв троса' : 'утонул';
+      if ((ev.t === 'break' || ev.t === 'drown' || ev.t === 'drive') && !b.out) {
+        b.out = ev.t === 'break' ? 'обрыв троса' : ev.t === 'drive' ? 'привод вышел из чата' : 'утонул';
         if (G.screen === 'racing' && !G.ended) msg(b.name + ': ' + b.out, '#ffd23e', false);
       }
     }
@@ -2257,7 +2327,7 @@ const RN = (function () {
       <h2>${total.toFixed(2)}</h2>
       <div class="sub">время двух кругов: ${fmt(G.laps[0])} + ${fmt(G.laps[1])}${G.pen ? ` · фальстарт +${G.pen.toFixed(2)}` : ''}</div>
       <div class="table final">${rows}</div>
-      <div class="sub small">Лебёдок: <b>${r.winches}</b> · заглохов на лебёдке: <b>${r.wstalls}</b> · перегревов: <b>${r.heats}</b> · чистых входов в воду: <b>${r.clean}</b></div>
+      <div class="sub small">${r.tyre ? 'Резина: <b>' + escHtml(r.tyre.name) + '</b> · ' : ''}Лебёдок: <b>${r.winches}</b> · заглохов на лебёдке: <b>${r.wstalls}</b> · перегревов: <b>${r.heats}</b> · чистых входов в воду: <b>${r.clean}</b></div>
       ${rank ? `<div class="sub small" style="color:${rank === 1 ? '#7dffa8' : '#ffd23e'}">
         ${rank === 1 ? '🏆 Новый личный рекорд!' : 'Результат записан в таблицу: ' + rank + '-е место.'}
         ${STORE.persistent ? '' : ' (не сохранится — браузер блокирует хранилище)'}</div>` : ''}
@@ -2290,6 +2360,7 @@ const RN = (function () {
   function failScreen() {
     G.screen = 'fail';
     const why = G.failWhy === 'break' ? ['Обрыв троса', 'Два раза подряд заглох на лебёдке — трос не выдержал.']
+      : G.failWhy === 'drive' ? ['Привод вышел из чата', 'Два раза подряд заглох в воде на Assassinator — привод не выдержал.']
       : G.failWhy === 'drown' ? ['Утонул', 'Мотор заглох в воде и не завёлся за ' + C.DROWN + ' с.']
       : ['Время вышло', 'Заезд длился дольше ' + Math.round(TIME_LIMIT / 60) + ' минут.'];
     show(`
@@ -2337,9 +2408,9 @@ const RN = (function () {
       if (!r.air && r.depth > 0.05 && r.v > 3 && Math.random() < 0.7) burst(r, 1, 'light');
       if (G.lightA > 0) G.lightA = Math.max(0, G.lightA - dt * 0.7);
       // конец заезда: финиш, обрыв троса, утонул, лимит времени
-      if (!G.ended && (r.broken || r.drowned || G.t > TIME_LIMIT)) {
+      if (!G.ended && (r.broken || r.drowned || r.driveOut || G.t > TIME_LIMIT)) {
         G.ended = true; G.endT = 0;
-        G.failWhy = r.broken ? 'break' : r.drowned ? 'drown' : 'time';
+        G.failWhy = r.broken ? 'break' : r.drowned ? 'drown' : r.driveOut ? 'drive' : 'time';
       }
       if (G.ended) {
         G.endT += dt;

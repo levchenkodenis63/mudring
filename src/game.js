@@ -27,7 +27,7 @@
     screen: 'menu', track: null, lanes: [null, null], lane: 0, pass: 0, me: null,
     t: 0, pre: 0, lights: 0, lightA: 0, started: false, pen: 0, fs: false,
     particles: [], splats: [], msgs: [], diff: 'normal', laps: [], endT: 0, ended: false, failWhy: '',
-    bots: [], place: 0, split: null
+    bots: [], place: 0, split: null, tyre: 'mudlite'
   };
   window.__MRG = G;
   const isExtreme = () => G.diff === 'extreme';
@@ -278,7 +278,7 @@
       easy: 'Широкая зелёная зона — привыкнуть к воде и лебёдке.',
       normal: 'Зелёная зона поуже.',
       hard: 'Узкая зелёная зона в воде и на лебёдке.',
-      extreme: 'Как «Профи», плюс: заглох в воде — заводи сам (отпусти и нажми газ), иначе утонешь; заглох на лебёдке два раза подряд — обрыв троса. Тогда время не засчитывается.'
+      extreme: 'Как «Профи», плюс: перед стартом выбираешь резину; заглох в воде — заводи сам (отпусти и нажми газ), иначе утонешь; заглох на лебёдке два раза подряд — обрыв троса. Тогда время не засчитывается.'
     };
     const seg = ov.querySelector('.seg[data-opt="d"]');
     const sync = () => {
@@ -376,9 +376,39 @@
     });
   }
 
-  // старт с главной: на «Экстриме» сначала вопрос по регламенту
+  // старт с главной: на «Экстриме» — выбор резины, затем вопрос по регламенту
   function startFlow() {
-    if (isExtreme()) questionScreen(readyScreen); else readyScreen();
+    if (isExtreme()) tyreScreen(() => questionScreen(readyScreen)); else readyScreen();
+  }
+
+  /* ---------- «Экстрим»: выбор резины на заезд ---------- */
+  const TYRE_INFO = {
+    mudlite: { plus: ['Шире зелёная зона — в воде и на лебёдке'], minus: ['Ниже скорость в воде'] },
+    assassinator: { plus: ['Выше скорость в воде', 'Быстрее на подъёмах и на лебёдке'],
+      minus: ['Уже зелёная зона', 'Заглох в воде 2 раза подряд — привод выходит из чата'] }
+  };
+  function tyreScreen(onPick) {
+    G.screen = 'tyre';
+    const cards = Object.keys(MR.TYRES).map((k) => `<button class="tyre${G.tyre === k ? ' on' : ''}" data-k="${k}">
+        <b>${escHtml(MR.TYRES[k].name)}</b><ul>
+        ${TYRE_INFO[k].plus.map((t) => `<li class="plus">${escHtml(t)}</li>`).join('')}
+        ${TYRE_INFO[k].minus.map((t) => `<li class="minus">${escHtml(t)}</li>`).join('')}</ul></button>`).join('');
+    show(`
+      <div class="kicker">Экстрим · тюнинг</div>
+      <h2>Выбери резину</h2>
+      <div class="sub">Резина ставится на весь заезд — оба круга. Соперники тоже выбирают свою.</div>
+      <div class="tyres">${cards}</div>
+      <div class="rowbtns">
+        <button class="btn" id="btn-tyre-back">НАЗАД</button>
+        <button class="btn primary" id="btn-tyre-go">ДАЛЕЕ</button>
+      </div>
+    `);
+    ov.querySelectorAll('.tyre').forEach((b) => b.addEventListener('click', () => {
+      G.tyre = b.dataset.k;
+      ov.querySelectorAll('.tyre').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+    document.getElementById('btn-tyre-back').addEventListener('click', () => { hide(); menu(); });
+    document.getElementById('btn-tyre-go').addEventListener('click', () => { hide(); setTimeout(onPick, 150); });
   }
 
   /* ---------- старт ---------- */
@@ -388,7 +418,8 @@
     G.pass = 0; G.lane = C.PASSES[0]; G.laps = []; G.failWhy = '';
     const r = MR.newRider();
     r.zw = MR.ZW[G.diff]; r.extreme = isExtreme();
-    G.me = { r, look: LOOK, name: STORE.name || 'ВЫ', player: true };
+    r.tyre = isExtreme() ? MR.TYRES[G.tyre] : null;
+    G.me ={ r, look: LOOK, name: STORE.name || 'ВЫ', player: true };
     // масстарт: 8 квадроциклов сеткой за стартовой линией, место игрока в сетке — случайное
     const rnd = MR.rng(Date.now() % 1e9), sk = SKILL[G.diff];
     const names = MR.shuffle(NAMES.slice(), rnd);
@@ -400,6 +431,7 @@
       const br = MR.newRider();
       br.extreme = isExtreme(); br.x = C.START - slots[i + 1] * GRID;
       const brnd = MR.rng(Math.floor(rnd() * 1e9) + i);
+      if (isExtreme()) br.tyre = MR.TYRES[brnd() < 0.5 ? 'mudlite' : 'assassinator'];   // боты выбирают резину наугад
       G.bots.push({ r: br, ai: MR.makeAI(sk[0] + (sk[1] - sk[0]) * brnd(), brnd, isExtreme()), name: names[i], look: LOOKS[1 + i],
         lane: C.PASSES[0], pass: 0, total: null, out: '', pen: 0 });
     }
@@ -413,11 +445,12 @@
       <div class="hero-bg"></div>
       <div class="hero-in">
         <div class="hero-top"></div>
-        <div class="kicker">${escHtml(DIFFNAME[G.diff])} · масстарт ${BOTS + 1} квадроциклов · 2 круга · лебёдок: ${nW}</div>
+        <div class="kicker">${escHtml(DIFFNAME[G.diff])}${r.tyre ? ' · резина ' + escHtml(r.tyre.name) : ''} · масстарт ${BOTS + 1} квадроциклов · 2 круга · лебёдок: ${nW}</div>
         <h2>${escHtml(STORE.name ? STORE.name + ', готов?' : 'Готов?')}</h2>
         <div class="sub">Масстарт с <b>верхней дорожки</b>, ты в сетке <b>${slots[0] + 1}-м</b>. Финишная арка — переход на другую дорожку, после четвёртого отрезка — финиш. Соперники — полупрозрачные, столкновений нет. Газ только после зелёного: фальстарт +2.00 с.</div>
         <div class="sub small">${isExtreme()
-          ? '<b>Экстрим:</b> заглох в воде — отпусти газ и нажми снова, иначе через ' + C.DROWN + ' с утонешь. Два заглоха подряд на лебёдке — обрыв троса. В обоих случаях время не засчитывается.'
+          ? '<b>Экстрим:</b> заглох в воде — отпусти газ и нажми снова, иначе через ' + C.DROWN + ' с утонешь. Два заглоха подряд на лебёдке — обрыв троса.' +
+            (r.tyre && r.tyre.drive ? ' На Assassinator два заглоха подряд в воде — привод выходит из чата.' : '') + ' Тогда время не засчитывается.'
           : 'На крутом выезде без лебёдки не подняться: подъедь к стенке и тапни по столбику (или <kbd>E</kbd>). Наверху тапни ещё раз — отцепи трос.'}</div>
         <button class="btn primary" id="btn-go">ГОТОВ</button>
         <div class="credit">фото: MUD RACING</div>
@@ -445,7 +478,8 @@
         else if (ev.kind === 'flood') { SFX.flood(); msg('ПЕРЕЛИВ! −25% хода', '#ff7a5a', false); RN.view.shake = 0.45; burst(r, 26, 'mud'); splat(); }
         else { msg('малый газ — тонет', '#ffd23e', false); SFX.splash(r.v); burst(r, 8, 'light'); }
       } else if (ev.t === 'overheat') {
-        msg(ev.dead ? 'ЗАГЛОХ! Отпусти газ и жми снова' : 'ЗАГЛОХ! −1.6 с', '#ff5a4a', false);
+        const last = ev.dead && r.tyre && r.tyre.drive && ev.n === r.tyre.drive - 1;   // Assassinator: ещё один — и привод всё
+        msg(last ? 'ЗАГЛОХ! Ещё раз в воде — привод не выдержит' : ev.dead ? 'ЗАГЛОХ! Отпусти газ и жми снова' : 'ЗАГЛОХ! −1.6 с', '#ff5a4a', false);
         RN.view.shake = 0.55; splat(); SFX.overheat(); burst(r, 10, 'dark');
       } else if (ev.t === 'restart') {
         msg('ЗАВЁЛСЯ!', '#7dffa8', false);
@@ -458,6 +492,8 @@
         msg(isExtreme() && ev.n === 1 ? 'ЗАГЛОХ НА ЛЕБЁДКЕ! Ещё раз — обрыв троса' : 'ЗАГЛОХ НА ЛЕБЁДКЕ — откат', '#ff5a4a', false);
       } else if (ev.t === 'break') {
         SFX.flood(); RN.view.shake = 1; msg('ОБРЫВ ТРОСА!', '#ff5a4a', true);
+      } else if (ev.t === 'drive') {
+        SFX.flood(); RN.view.shake = 1; splat(); burst(r, 24, 'dark'); msg('ПРИВОД ВЫШЕЛ ИЗ ЧАТА', '#ff5a4a', true);
       } else if (ev.t === 'top') {
         SFX.ui(); msg('НАВЕРХУ! Отцепи трос', '#7dffa8', false);
       } else if (ev.t === 'land') {
@@ -495,8 +531,8 @@
     if (a.tap) MR.winchTap(r);
     MR.stepRider(r, G.track, b.lane, a.gas, dt, t);
     for (const ev of r.ev) {
-      if ((ev.t === 'break' || ev.t === 'drown') && !b.out) {
-        b.out = ev.t === 'break' ? 'обрыв троса' : 'утонул';
+      if ((ev.t === 'break' || ev.t === 'drown' || ev.t === 'drive') && !b.out) {
+        b.out = ev.t === 'break' ? 'обрыв троса' : ev.t === 'drive' ? 'привод вышел из чата' : 'утонул';
         if (G.screen === 'racing' && !G.ended) msg(b.name + ': ' + b.out, '#ffd23e', false);
       }
     }
@@ -575,7 +611,7 @@
       <h2>${total.toFixed(2)}</h2>
       <div class="sub">время двух кругов: ${fmt(G.laps[0])} + ${fmt(G.laps[1])}${G.pen ? ` · фальстарт +${G.pen.toFixed(2)}` : ''}</div>
       <div class="table final">${rows}</div>
-      <div class="sub small">Лебёдок: <b>${r.winches}</b> · заглохов на лебёдке: <b>${r.wstalls}</b> · перегревов: <b>${r.heats}</b> · чистых входов в воду: <b>${r.clean}</b></div>
+      <div class="sub small">${r.tyre ? 'Резина: <b>' + escHtml(r.tyre.name) + '</b> · ' : ''}Лебёдок: <b>${r.winches}</b> · заглохов на лебёдке: <b>${r.wstalls}</b> · перегревов: <b>${r.heats}</b> · чистых входов в воду: <b>${r.clean}</b></div>
       ${rank ? `<div class="sub small" style="color:${rank === 1 ? '#7dffa8' : '#ffd23e'}">
         ${rank === 1 ? '🏆 Новый личный рекорд!' : 'Результат записан в таблицу: ' + rank + '-е место.'}
         ${STORE.persistent ? '' : ' (не сохранится — браузер блокирует хранилище)'}</div>` : ''}
@@ -608,6 +644,7 @@
   function failScreen() {
     G.screen = 'fail';
     const why = G.failWhy === 'break' ? ['Обрыв троса', 'Два раза подряд заглох на лебёдке — трос не выдержал.']
+      : G.failWhy === 'drive' ? ['Привод вышел из чата', 'Два раза подряд заглох в воде на Assassinator — привод не выдержал.']
       : G.failWhy === 'drown' ? ['Утонул', 'Мотор заглох в воде и не завёлся за ' + C.DROWN + ' с.']
       : ['Время вышло', 'Заезд длился дольше ' + Math.round(TIME_LIMIT / 60) + ' минут.'];
     show(`
@@ -655,9 +692,9 @@
       if (!r.air && r.depth > 0.05 && r.v > 3 && Math.random() < 0.7) burst(r, 1, 'light');
       if (G.lightA > 0) G.lightA = Math.max(0, G.lightA - dt * 0.7);
       // конец заезда: финиш, обрыв троса, утонул, лимит времени
-      if (!G.ended && (r.broken || r.drowned || G.t > TIME_LIMIT)) {
+      if (!G.ended && (r.broken || r.drowned || r.driveOut || G.t > TIME_LIMIT)) {
         G.ended = true; G.endT = 0;
-        G.failWhy = r.broken ? 'break' : r.drowned ? 'drown' : 'time';
+        G.failWhy = r.broken ? 'break' : r.drowned ? 'drown' : r.driveOut ? 'drive' : 'time';
       }
       if (G.ended) {
         G.endT += dt;

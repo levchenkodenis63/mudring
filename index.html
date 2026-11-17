@@ -42,6 +42,17 @@
     border:1px solid rgba(255,255,255,.06);border-left:3px solid var(--orange);
     border-radius:10px;padding:9px 12px}
   .rule b{color:#fff}
+  /* «Экстрим»: выбор резины */
+  .tyres{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 18px}
+  @media (max-width:520px){.tyres{grid-template-columns:1fr}}
+  .tyre{text-align:left;font:inherit;color:#c6cbd4;background:rgba(255,255,255,.035);cursor:pointer;
+    border:1px solid var(--line);border-radius:13px;padding:14px 14px 12px;transition:border-color .15s,background .15s}
+  .tyre b{display:block;color:#fff;font-size:19px;font-weight:900;margin-bottom:8px}
+  .tyre ul{margin:0;padding-left:18px;font-size:13px;line-height:1.5}
+  .tyre li.plus{color:var(--green)}
+  .tyre li.minus{color:#ff8a6a}
+  .tyre:hover{border-color:rgba(255,255,255,.28)}
+  .tyre.on{border-color:var(--orange);background:rgba(255,122,31,.10);box-shadow:0 0 0 1px var(--orange) inset}
   .opts{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:18px}
   .opt{display:flex;flex-direction:column;gap:7px;font-size:12px;letter-spacing:1.2px;
     text-transform:uppercase;color:var(--dim);font-weight:700}

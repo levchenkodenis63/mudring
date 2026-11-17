@@ -42,6 +42,15 @@ const MR = (function () {
   };
   // ширина зелёной зоны игрока по уровням: на столько расширяется зона с каждой стороны (боты — без поправки)
   const ZW = { easy: 0.08, normal: 0.04, hard: 0, extreme: 0 };
+  // «Экстрим»: резина на заезд. zw — поправка зелёной зоны (в воде и на лебёдке), water — скорость в воде,
+  // slope — доля штрафа за подъём, winch — скорость лебёдки, drive — столько заглохов подряд в воде ломают привод (0 — не ломают)
+  const TYRES = {
+    mudlite: { name: 'MudLite', zw: 0.05, water: 0.92, slope: 1, winch: 1, drive: 0 },
+    assassinator: { name: 'Assassinator', zw: -0.04, water: 1.08, slope: 0.6, winch: 1.15, drive: 2 }
+  };
+  const NO_TYRE = { zw: 0, water: 1, slope: 1, winch: 1, drive: 0 };
+  const tyreOf = (r) => r.tyre || NO_TYRE;
+  const zwOf = (r) => r.zw + tyreOf(r).zw;
 
   // равномерное перемешивание (Фишер — Йейтс); sort(() => rnd() - 0.5) даёт перекос
   function shuffle(a, rnd) {
@@ -181,7 +190,8 @@ const MR = (function () {
       extreme: false, dead: false, deadT: 0, prevGas: false, drowned: false, sinkT: 0,
       zw: 0,                                   // поправка ширины зелёной зоны (уровень)
       spot: null, cable: false, atTop: false,  // лебёдка: ближайший выезд, трос зацеплен, наверху
-      roll: 0, winchStalls: 0, broken: false, done: {}, blocked: false, winches: 0, wstalls: 0
+      roll: 0, winchStalls: 0, broken: false, done: {}, blocked: false, winches: 0, wstalls: 0,
+      tyre: null, waterStalls: 0, driveOut: false   // «Экстрим»: резина, заглохи подряд в воде, сломан привод
     };
   }
 
@@ -194,11 +204,19 @@ const MR = (function () {
       r.pitch += (0.18 - r.pitch) * Math.min(1, dt * 2);
       return;
     }
+    // привод сломан: стоит в воде, мотор глохнет
+    if (r.driveOut) {
+      r.v = 0; r.gas = false; r.spin = false;
+      r.rpm = Math.max(C.IDLE, r.rpm - dt);
+      return;
+    }
     const pressed = gas, fresh = pressed && !r.prevGas;
     r.prevGas = pressed;
     const depth = depthAt(track, l, r.x);
     const d = clamp(depth / C.FLOAT, 0, 1);
     r.d = d; r.depth = depth; r.float = depth > C.FLOAT;
+    if (d <= 0.02 && !r.dead) r.waterStalls = 0;     // выехал из воды — счёт заглохов подряд сначала
+    const ty = tyreOf(r);
     if (r.dead) {
       // «Экстрим»: заглох в воде — завести можно только новым нажатием газа
       r.deadT += dt; r.cut = 1; gas = false;
@@ -219,7 +237,7 @@ const MR = (function () {
     r.spot = null;
     if (ws) for (const sp of ws) if (!r.done[sp.id] && r.x > sp.x0 - 12 && r.x <= sp.x1 + 0.01) { r.spot = sp; break; }
     if (r.spot && r.cable && r.go) { winchStep(r, track, l, gas, dt); return; }
-    const z = zone(d, r.zw), lo = z[0], hi = z[1];
+    const z = zone(d, zwOf(r)), lo = z[0], hi = z[1];
     r.lo = lo; r.hi = hi;
 
     if (gas) r.rpm += (r.air ? 1.5 : 0.9) * dt; else r.rpm -= 0.8 * dt;
@@ -245,14 +263,19 @@ const MR = (function () {
       }
       if (r.heat >= 1 && r.cut <= 0 && !r.dead && !r.fin) {
         r.heat = 0.6; r.heats++;
-        if (r.extreme && inWater) { r.dead = true; r.deadT = 0; r.cut = 1; }
+        if (r.extreme && inWater) { r.dead = true; r.deadT = 0; r.cut = 1; r.waterStalls++; }
         else r.cut = 1.6;
-        r.ev.push({ t: 'overheat', dead: r.dead });
+        r.ev.push({ t: 'overheat', dead: r.dead, n: r.waterStalls });
+        if (r.dead && ty.drive && r.waterStalls >= ty.drive) {      // Assassinator: привод не выдержал
+          r.dead = false; r.driveOut = true; r.v = 0;
+          r.ev.push({ t: 'drive' });
+          return;
+        }
       }
       const gF = groundAt(track, l, r.x + 0.6), gR = groundAt(track, l, r.x - 0.6);
       const slope = (gF - gR) / 1.2;
-      let vmax = inWater ? lerp(10.5, 4.6, Math.pow(d, 0.8)) : 15;
-      if (slope > 0) vmax *= 1 - 0.45 * Math.min(1, slope / 0.5);
+      let vmax = inWater ? lerp(10.5, 4.6, Math.pow(d, 0.8)) * ty.water : 15;
+      if (slope > 0) vmax *= 1 - 0.45 * ty.slope * Math.min(1, slope / 0.5);
       const vt = vmax * eff * (1 - 0.45 * r.dig);
       let a;
       if (vt > r.v) a = Math.min((vt - r.v) * (inWater ? 1.8 : 1.2), inWater ? 5.5 : 7.5);
@@ -300,7 +323,7 @@ const MR = (function () {
       const dep = depthAt(track, l, r.x);
       if (dep > 0.1) {
         r.entered[bi] = true;
-        const zz = zone(clamp(dep / C.FLOAT, 0, 1), r.zw);
+        const zz = zone(clamp(dep / C.FLOAT, 0, 1), zwOf(r));
         let kind;
         if (r.rpm > zz[1] + 0.02) { kind = 'flood'; r.v *= 0.74; r.heat = Math.min(0.97, r.heat + 0.12); r.floods++; }
         else if (r.rpm >= zz[0] - 0.06) { kind = 'clean'; r.v *= 0.94; r.clean++; }
@@ -327,7 +350,7 @@ const MR = (function () {
   // В зелёной зоне — тянет, ниже — сползает обратно, выше — мотор греется и глохнет (откат в лужу).
   function winchStep(r, track, l, gas, dt) {
     const sp = r.spot;
-    const z = winchZone(r.zw), lo = z[0], hi = z[1];
+    const z = winchZone(zwOf(r)), lo = z[0], hi = z[1], wv = C.WINCH_V * tyreOf(r).winch;
     r.lo = lo; r.hi = hi;
     if (r.cut > 0 || r.atTop) gas = r.atTop ? gas : false;
     if (r.cut > 0) r.cut -= dt;
@@ -347,7 +370,7 @@ const MR = (function () {
     } else {
       const over = Math.max(0, r.rpm - hi);
       if (r.rpm < lo) v = C.WINCH_V * (0.75 * (r.rpm - C.IDLE) / (lo - C.IDLE) - 0.35);   // мало оборотов — сползает
-      else v = C.WINCH_V * (over > 0 ? Math.max(0.35, 1 - over * 3) : 1);
+      else v = wv * (over > 0 ? Math.max(0.35, 1 - over * 3) : 1);
       if (over > 0) r.heat += (0.35 + over * C.WINCH_HEAT) * dt;
       else r.heat = Math.max(0, r.heat - 0.25 * dt);
       if (r.heat >= 1) {                                       // перекрутил — заглох, трос ослаб, откат
@@ -369,7 +392,7 @@ const MR = (function () {
   /* зацепить / отцепить трос — тап по столбику. Возвращает, что произошло. */
   function winchTap(r) {
     const sp = r.spot;
-    if (!sp || r.fin || r.drowned || r.broken) return 'none';
+    if (!sp || r.fin || r.drowned || r.broken || r.driveOut) return 'none';
     if (!r.cable) {
       if (r.air || r.x < sp.x0 - C.WINCH_REACH) return 'far';
       r.cable = true; r.atTop = false; r.roll = 0; r.winchStalls = 0; r.v = 0; r.winches++;
@@ -431,7 +454,7 @@ const MR = (function () {
     return { gas: r.rpm < target, tap: false };
   }
 
-  return { C, ZW, clamp, lerp, smooth, rng, shuffle, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
+  return { C, ZW, TYRES, clamp, lerp, smooth, rng, shuffle, makeTrack, hAt, bathAt, depthAt, groundAt, nextBathDist, zone, winchZone,
     newRider, stepRider, winchTap, makeAI, aiStep };
 })();
 if (typeof module !== 'undefined') module.exports = MR;
