@@ -321,11 +321,13 @@ const MR = (function () {
   // ширина зелёной зоны игрока по уровням: на столько расширяется зона с каждой стороны (боты — без поправки)
   const ZW = { easy: 0.08, normal: 0.04, hard: 0, extreme: 0 };
   // «Экстрим»: резина на заезд. zw — поправка зелёной зоны (в воде и на лебёдке), water — скорость в воде,
-  // slope — доля штрафа за подъём, winch — скорость лебёдки, drive — столько заглохов подряд в воде ломают привод (0 — не ломают)
+  // slope — доля штрафа за подъём, winch — скорость лебёдки, drive — столько заглохов подряд в воде ломают привод (0 — не ломают),
+  // err — множитель ошибок ботов (шире зона — реже ошибаются): перекрут на лебёдке и в воде
   const TYRES = {
-    mudlite: { name: 'MudLite', zw: 0.05, water: 0.92, slope: 1, winch: 1, drive: 0 },
-    assassinator: { name: 'Assassinator', zw: -0.04, water: 1.08, slope: 0.6, winch: 1.15, drive: 2 }
+    mudlite: { name: 'MudLite', zw: 0.05, water: 0.92, slope: 1, winch: 1, drive: 0, err: 0.6 },
+    assassinator: { name: 'Assassinator', zw: -0.04, water: 1.08, slope: 0.6, winch: 1.15, drive: 2, err: 1.3 }
   };
+  const AI_WATER_ERR = 0.10;   // шанс бота перекрутить в ванне: AI_WATER_ERR × (1.1 − skill) × err (только с резиной — «Экстрим»)
   const NO_TYRE = { zw: 0, water: 1, slope: 1, winch: 1, drive: 0 };
   const tyreOf = (r) => r.tyre || NO_TYRE;
   const zwOf = (r) => r.zw + tyreOf(r).zw;
@@ -686,7 +688,7 @@ const MR = (function () {
   function makeAI(skill, rnd, extreme) {
     const s = clamp(skill + (rnd() - 0.5) * 0.12, 0.05, 1);
     return {
-      skill: s, rnd, pass: 0, n: 0, nT: 0, nt: 0, w: null, stalls: 0,
+      skill: s, rnd, pass: 0, n: 0, nT: 0, nt: 0, w: null, stalls: 0, wb: null,   // wb — план на текущую ванну
       react: 0.17 + rnd() * 0.42 * (1.25 - s),
       aim: 0.42 + 0.42 * s,                  // куда в зелёной зоне целится
       amp: 0.17 - 0.13 * s,                  // разброс газа
@@ -706,11 +708,20 @@ const MR = (function () {
     ai.n += (ai.nT - ai.n) * Math.min(1, dt * 6);
     const sinkNow = !!ai.sink && ai.sink.pass === ai.pass;
     if (r.dead) return { gas: !sinkNow && r.deadT >= ai.restartAt, tap: false };
+    const err = r.tyre ? r.tyre.err : 1;
+    // ванна: при въезде решаем, перекрутит ли бот в ней (0, 1 или 2 раза — дважды на Assassinator ломает привод)
+    const bi = bathAt(track, r.x);
+    if (bi >= 0 && r.tyre && (!ai.wb || ai.wb.key !== ai.pass * 3 + bi)) {
+      const mist = rnd() < AI_WATER_ERR * (1.1 - ai.skill) * err ? (rnd() < 0.35 ? 2 : 1) : 0;
+      ai.wb = { key: ai.pass * 3 + bi, mist, seen: r.waterStalls };
+    }
+    const wb = bi >= 0 && ai.wb && ai.wb.key === ai.pass * 3 + bi ? ai.wb : null;
+    if (wb && r.waterStalls !== wb.seen) { if (r.waterStalls > wb.seen && wb.mist > 0) wb.mist--; wb.seen = r.waterStalls; }
     const sp = r.spot;
     if (sp && (r.cable || r.x >= sp.x0 - 0.6)) {
       if (!ai.w || ai.w.id !== sp.id) {
         // на каждой лебёдке: пауза до тапа, сколько раз перекрутит (ошибки), пауза наверху
-        const mist = rnd() < 0.25 * (1.1 - ai.skill) ? (rnd() < 0.3 ? 2 : 1) : 0;
+        const mist = rnd() < 0.25 * (1.1 - ai.skill) * err ? (rnd() < 0.3 ? 2 : 1) : 0;
         ai.w = { id: sp.id, wait: 0.2 + rnd() * 0.6 * (1.2 - ai.skill), mist, top: 0.25 + rnd() * 0.7 * (1.2 - ai.skill) };
       }
       const w = ai.w;
@@ -721,7 +732,8 @@ const MR = (function () {
       const target = w.mist > 0 ? 1 : r.lo + (r.hi - r.lo) * ai.aim + ai.n * 0.6;
       return { gas: r.rpm < target, tap: false };
     }
-    if (sinkNow && bathAt(track, r.x) === ai.sink.bath && r.d > 0.3) return { gas: true, tap: false };
+    if (sinkNow && bi === ai.sink.bath && r.d > 0.3) return { gas: true, tap: false };
+    if (wb && wb.mist > 0 && r.d > 0.3 && r.cut <= 0) return { gas: true, tap: false };   // перекрут в воде — до заглоха
     let target = r.lo + (r.hi - r.lo) * ai.aim + ai.n;
     if (sp && r.x > sp.x0 - 3) target = Math.min(target, r.lo);          // подъезжает к стенке — сбрасывает
     if (r.d <= 0.02 && ai.careful) {
